@@ -61,7 +61,16 @@ class SWEBenchTask(Task):
 
             from .reward import compute_reward
 
-            result = await compute_reward(sample, sandbox, eval_timeout=cfg.eval_timeout)
+            try:
+                result = await compute_reward(sample, sandbox, eval_timeout=cfg.eval_timeout)
+            except Exception as exc:
+                if await sandbox.is_alive():
+                    raise
+                # A sandbox that died mid-episode (e.g. it ran out of memory) is an unresolved attempt;
+                # failing the session instead would discard every trajectory in its GRPO group.
+                logger.warning(f"sandbox died before scoring instance_id={instance_id}: {type(exc).__name__}: {exc}")
+                result = {"resolved": False, "sandbox_error": f"{type(exc).__name__}: {exc}"}
+                finished = False
             if isinstance(agent_error, str) and agent_error.strip():
                 result = {**result, "agent_error": agent_error}
 

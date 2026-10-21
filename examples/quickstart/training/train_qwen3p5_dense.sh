@@ -176,7 +176,6 @@ ray job submit --no-wait --runtime-env "${RUNTIME_ENV}" \
     +actor_rollout_ref.actor.optim.override_optimizer_config.use_precision_aware_optimizer=True \
     +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=True \
     actor_rollout_ref.actor.megatron.use_mbridge=$USE_MBRIDGE \
-    actor_rollout_ref.actor.megatron.vanilla_mbridge=$USE_MBRIDGE \
     actor_rollout_ref.actor.megatron.use_dist_checkpointing=$USE_DIST_CKPT \
     actor_rollout_ref.actor.megatron.param_offload=${offload} \
     actor_rollout_ref.actor.megatron.optimizer_offload=${offload} \
@@ -273,9 +272,10 @@ ray job submit --no-wait --runtime-env "${RUNTIME_ENV}" \
     trainer.total_epochs=10 \
     trainer.total_training_steps="${total_training_steps}" \
     trainer.resume_mode=auto \
-    trainer.log_val_generations=10 \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.nnodes="${NNODES}" \
     trainer.n_gpus_per_node="${NGPUS_PER_NODE}" \
     trainer.test_freq="${test_freq}" \
     "$@"
+
+    # trainer.log_val_generations=10 \

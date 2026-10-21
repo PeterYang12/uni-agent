@@ -1,0 +1,10 @@
+- name: swe_bench
+  run_oracle_solution: true
+  sandbox:
+    provider: e2b
+    runtime_timeout: 3600
+    sandbox_kwargs:
+      user: root
+      envs:
+        LANG: C.UTF-8
+        LC_ALL: C.UTF-8

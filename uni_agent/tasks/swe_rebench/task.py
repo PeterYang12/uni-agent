@@ -116,9 +116,15 @@ class SWEREBenchTask(Task):
                 from .reward import compute_reward
 
                 result = await compute_reward(sample, sandbox, eval_timeout=cfg.eval_timeout)
-            except Exception:
-                logger.exception(f"scoring failed for instance_id={instance_id}")
-                raise
+            except Exception as exc:
+                if await sandbox.is_alive():
+                    logger.exception(f"scoring failed for instance_id={instance_id}")
+                    raise
+                # A sandbox that died mid-episode (e.g. it ran out of memory) is an unresolved attempt;
+                # failing the session instead would discard every trajectory in its GRPO group.
+                logger.warning(f"sandbox died before scoring instance_id={instance_id}: {type(exc).__name__}: {exc}")
+                result = {"resolved": False, "sandbox_error": f"{type(exc).__name__}: {exc}"}
+                finished = False
 
             logger.info(f"task done: resolved={result['resolved']}")
             return TaskResult(

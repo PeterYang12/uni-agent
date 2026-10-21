@@ -46,3 +46,38 @@ async def test_swe_task_preserves_explicit_agent_error_without_changing_reward(m
         assert result.extra_info["agent_error"] == agent_error
     else:
         assert "agent_error" not in result.extra_info
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alive", [False, True])
+async def test_swe_task_scores_a_dead_sandbox_as_unresolved(monkeypatch, alive):
+    sandbox = SimpleNamespace(is_alive=AsyncMock(return_value=alive))
+
+    @asynccontextmanager
+    async def build_sandbox():
+        yield sandbox
+
+    agent = SimpleNamespace(run=AsyncMock(return_value=AgentResult(finished=True, info={})))
+    task = object.__new__(SWEBenchTask)
+    task.config = SimpleNamespace(
+        metadata={"instance_id": "test"},
+        model_dump=lambda **kwargs: {},
+        run_oracle_solution=False,
+        prompt=[{"role": "user", "content": "test"}],
+        eval_timeout=60,
+    )
+    task.build_sandbox = build_sandbox
+    task.build_agent = lambda: agent
+    monkeypatch.setattr(reward, "compute_reward", AsyncMock(side_effect=TimeoutError("sandbox unreachable")))
+
+    if alive:
+        with pytest.raises(TimeoutError):
+            await task.run()
+        return
+    result = await task.run()
+
+    assert result.reward == result.accuracy == 0.0
+    assert result.finished is False
+    assert result.extra_info["sandbox_error"] == "TimeoutError: sandbox unreachable"

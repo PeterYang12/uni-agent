@@ -3,7 +3,7 @@
 # Follows Case 1 of docs/source/quickstart/rl-training.md; only values that differ from the defaults of
 # examples/quickstart/training/train_qwen3_moe.sh are set here. Export the variables listed in env.sh, start Ray,
 # then run it as is.
-# Checkpoints are saved every 20 steps and only the latest 2 are kept; rerunning with the same EXP_NAME resumes
+# Checkpoints are saved every 5 steps and only the latest 2 are kept; rerunning with the same EXP_NAME resumes
 # from the latest one. As upstream, a checkpoint holds the model weights but not the optimizer state.
 # Validates on the 100 Verified tasks before training and every 20 steps (Case 1 does not validate online).
 #
@@ -20,8 +20,8 @@
 # 8192 tokens; a session whose sandbox dies anyway is scored as unresolved instead of failing its GRPO group.
 set -euo pipefail
 cd "$(dirname "$0")"
-source env.sh
-python3 prepare_e2b_job.py
+# source env.sh
+# python3 prepare_e2b_job.py
 
 MODEL_PATH=$MODEL_DIR/Qwen3-Coder-30B-A3B-Instruct \
 TRAIN_FILE=$DATA_DIR/swe_rebench_500_seed42_oracle_ok.parquet \
@@ -37,7 +37,7 @@ MASK_UNFINISHED_EPISODE=True LOSS_MODE=gspo CLIP_RATIO_LOW=4e-4 CLIP_RATIO_HIGH=
 ROUTER_REPLAY_MODE=R3 ENABLE_ROLLOUT_ROUTING_REPLAY=True LR_DECAY_STEPS=10000 \
 bash examples/quickstart/training/train_qwen3_moe.sh \
     trainer.val_before_train=True \
-    trainer.save_freq=20 \
+    trainer.save_freq=5 \
     trainer.max_actor_ckpt_to_keep=2 \
     ++actor_rollout_ref.rollout.engine_kwargs.vllm.disable_custom_all_reduce=True \
     "$@"

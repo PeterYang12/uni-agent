@@ -1,6 +1,6 @@
-# ReAct training on the self-hosted E2B. The templates on E2B were built with the
-# default 2 vCPU / 4096 MB, which is part of the template name: do not set
-# sandbox_kwargs.cpu_count / memory_mb here, or every task will trigger a rebuild.
+# ReAct training on the self-hosted E2B. The templates on E2B were built with 2 vCPU / 4096 MB, which is part
+# of the template name: changing cpu_count / memory_mb makes every task build a new template on first use, so
+# build the templates with the new size on E2B before changing them here.
 # The E2B server caps a sandbox timeout at 1 hour ("Timeout cannot be greater than 1 hours"). With the
 # lifecycle below, a timed-out sandbox is paused (memory + filesystem) and resumes on its next request.
 - name: swe_rebench
@@ -8,6 +8,8 @@
     provider: e2b
     runtime_timeout: 3600
     sandbox_kwargs:
+      cpu_count: 2
+      memory_mb: 4096
       envs:
         LANG: C.UTF-8
         LC_ALL: C.UTF-8
@@ -116,7 +118,14 @@
         - Your changes maintain compatibility with existing functionality
         - Edge cases are properly handled
 
+# Validation (SWE-bench Verified). The scripts let request sampling params through the gateway
+# (allowed_request_sampling_param_keys), so an agent override replaces val_kwargs: use val_kwargs' top_p here.
 - name: swe_bench
   sandbox: *e2b_sandbox
-  agent: *react_agent
+  agent:
+    <<: *react_agent
+    sampling_params_override:
+      temperature: 1.0
+      top_p: 0.95
+      max_tokens_per_turn: 8192
   prompt_template: *swe_react_prompt

@@ -420,7 +420,7 @@ class Sandbox(abc.ABC):
         except asyncio.TimeoutError as exc:
             raise TimeoutError(f"sandbox start() exceeded SANDBOX_STARTUP_TIMEOUT={timeout:g}s") from exc
 
-    async def __aenter__(self, retry: int = 3) -> Sandbox:
+    async def __aenter__(self, retry: int = 6) -> Sandbox:
         """Create the sandbox (retrying transient ``start()`` failures) and return it ready.
 
         Each attempt holds one startup slot (``SANDBOX_STARTUP_CONCURRENCY``)
@@ -448,7 +448,8 @@ class Sandbox(abc.ABC):
                 raise
             logger.warning("sandbox failed to start (attempt %d/%d): %r", attempt, retry, last_exc)
             if attempt < retry:
-                await asyncio.sleep(2 * attempt)
+                # Remote providers (e.g. a shared E2B) return transient 5xx under load; give them time to recover.
+                await asyncio.sleep(min(10 * attempt, 60))
         assert last_exc is not None
         logger.error("sandbox failed to start after %d attempts: %r", retry, last_exc)
         raise last_exc

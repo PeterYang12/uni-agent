@@ -1,5 +1,5 @@
-# Ray runtime env template for 3_train/4_train. prepare_e2b_job.py fills the placeholders from the environment
-# and writes the result to the runtime dir, so the keys never land in git.
+# Ray runtime env for the training scripts, passed to `ray job submit` as is.
+# Contains the E2B and W&B API keys: do not commit or push this file with real keys.
 working_dir: ./
 excludes: ["/.git/"]
 
@@ -12,27 +12,16 @@ env_vars:
   TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
   CUDA_DEVICE_MAX_CONNECTIONS: "1"
 
-  E2B_API_KEY: "${E2B_API_KEY}"
-  E2B_API_URL: "${E2B_API_URL}"
-  E2B_SANDBOX_URL: "${E2B_SANDBOX_URL}"
-
-  # Runs TE's training MoE grouped GEMM on AITER's Triton kernels; the default backward can hang on gfx950.
-  # TE only takes this path when gradient_accumulation_fusion=False, which the scripts no longer set, so it is
-  # inactive until ++actor_rollout_ref.actor.megatron.override_transformer_config.gradient_accumulation_fusion=False
-  # is added back.
   NVTE_USE_GROUPED_GEMM_TRITON: "1"
 
-  # The container defaults to expandable segments, and on this ROCm stack PyTorch peer copies out of
-  # expandable-segment (VMM) memory silently return wrong data (RCCL collectives are unaffected).
-  # PYTORCH_ALLOC_CONF: "expandable_segments:False"
-
-  # vLLM keeps its Triton MoE: its AITER MoE imports aiter.ops.flydsl.moe_common, which needs aiter >= 0.1.13.post1,
-  # and this image ships 0.1.12, so vLLM fails at startup. After upgrading aiter, enable these together with
-  # ++actor_rollout_ref.rollout.engine_kwargs.vllm.moe_backend=aiter in the scripts.
-  # VLLM_ROCM_USE_AITER: "1"
+  VLLM_ROCM_USE_AITER: "1"
   # VLLM_ROCM_USE_AITER_MHA: "0"
   # VLLM_ROCM_USE_AITER_LINEAR: "0"
   # VLLM_ROCM_USE_AITER_RMSNORM: "0"
 
-  WANDB_API_KEY: "${WANDB_API_KEY}"
-  WANDB_DIR: "${RUNTIME_DIR}/wandb"
+  E2B_API_KEY: ""
+  E2B_API_URL: ""
+  E2B_SANDBOX_URL: ""
+
+  WANDB_API_KEY: ""
+  WANDB_DIR: "/work/runtime/wandb"

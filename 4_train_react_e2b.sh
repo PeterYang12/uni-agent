@@ -26,10 +26,10 @@ cd "$(dirname "$0")"
 MODEL_PATH=$MODEL_DIR/Qwen3-Coder-30B-A3B-Instruct \
 TRAIN_FILE=$DATA_DIR/swe_rebench_500_seed42_oracle_ok.parquet \
 TEST_FILE=$DATA_DIR/verified_100_seed42.parquet \
-RUNTIME_ENV=$RUNTIME_DIR/runtime_env_e2b.yaml \
+RUNTIME_ENV=configs/runtime_env_e2b.yaml \
 TASK_CONFIG=configs/task_config_react_e2b.yaml \
 PROJECT_NAME=Uni-Agent-Qwen3-Coder-30B-react-e2b \
-EXP_NAME=react_e2b_8gpu \
+EXP_NAME=crusoe_react_e2b_24gpu \
 NNODES=1 CONCURRENCY=256 PP=1 CP=1 \
 TRAIN_PROMPT_BSZ=32 TEST_FREQ=20 \
 MAX_RESPONSE_LENGTH=122880 \

@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
-# train_qwen3_moe.sh in V1 separate_async (fully async) mode: the trainer and the rollout replicas run on separate
-# GPU pools (actor_rollout_ref.hybrid_engine=False) and the rollout weights are refreshed every PARAMETER_SYNC_STEP
-# mini-batch updates over the nccl checkpoint engine. Defaults: 3 nodes / 24 GPUs = 1 training node
-# (TP=4 EP=8, no CPU offload) + 2 rollout nodes (4 vLLM instances at TP=4), ReAct on E2B.
-# Paths are the sandbox container's mounts; runtime env vars (E2B, W&B) come from configs/runtime_env_e2b.yaml.
-# Start a Ray cluster with NNODES + ROLLOUT_NNODES nodes, then run from the repository root.
-# Rerunning with the same EXP_NAME resumes from the latest checkpoint.
 set -xeuo pipefail
 
-DATA_DIR=${DATA_DIR:-/work/data}
-MODEL_DIR=${MODEL_DIR:-/work/models}
+DATA_DIR=${DATA_DIR:-/work}
 RUNTIME_DIR=${RUNTIME_DIR:-/work/runtime}
 
-project_name=${PROJECT_NAME:-"Uni-Agent-Qwen3-Coder-30B-react-e2b"}
-exp_name=${EXP_NAME:-"1022_crusoe_react_e2b_sepasync_16r8t"}
+project_name=${PROJECT_NAME:-"crusoe-Uni-Agent-Qwen3-Coder-30B-react-e2b_16inference_8_train"}
+exp_name=${EXP_NAME:-"$(date +%Y%m%d%H)_exp"}
 
-MODEL_PATH=${MODEL_PATH:-"${MODEL_DIR}/Qwen3-Coder-30B-A3B-Instruct"}
-TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/swe_rebench_500_seed42_oracle_ok.parquet"}
-TEST_FILE=${TEST_FILE:-"${DATA_DIR}/verified_100_seed42.parquet"}
+MODEL_PATH=${MODEL_PATH:-"${DATA_DIR}/models/Qwen3-Coder-30B-A3B-Instruct"}
+TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/data/swe_rebench_filtered_1150.parquet"}
+TEST_FILE=${TEST_FILE:-"${DATA_DIR}/data/swe_bench_verified.parquet"}
 
 RUNTIME_ENV=${RUNTIME_ENV:-"configs/runtime_env_e2b.yaml"}
 CKPTS_DIR=${CKPTS_DIR:-"${RUNTIME_DIR}/ckpts/${project_name}/${exp_name}"}
@@ -30,9 +22,9 @@ AGENT_LOG_DIR=${AGENT_LOG_DIR:-"${RUNTIME_DIR}/logs/${project_name}/${exp_name}"
 TASK_CONFIG=${TASK_CONFIG:-"configs/task_config_react_e2b.yaml"}
 TOOL_PARSER=${TOOL_PARSER:-"qwen3_coder"}    # gateway tool-call parser; MUST match the model chat template
 GATEWAY_COUNT=${GATEWAY_COUNT:-8}            # gateway actors fronting the engine
-CONCURRENCY=${CONCURRENCY:-512}              # max in-flight rollout sessions (runner cap)
+CONCURRENCY=${CONCURRENCY:-1024}             # max in-flight rollout sessions (runner cap)
 SERVED_MODEL_NAME=${SERVED_MODEL_NAME:-"$(basename "${MODEL_PATH}")"}
-MASK_UNFINISHED_EPISODE=${MASK_UNFINISHED_EPISODE:-True}  # opt-in: zero the loss mask for unfinished episodes
+MASK_UNFINISHED_EPISODE=${MASK_UNFINISHED_EPISODE:-False}  # opt-in: zero the loss mask for unfinished episodes
 TRAJECTORY_SELECTION=${TRAJECTORY_SELECTION:-all}  # all | longest; Claude Code should use longest
 
 rollout_mode=${ROLLOUT_MODE:-"async"}
@@ -46,8 +38,8 @@ kl_coef=${KL_COEF:-0.0}
 use_kl_loss=${USE_KL_LOSS:-False}
 kl_loss_coef=${KL_LOSS_COEF:-0.0}
 
-clip_ratio_low=${CLIP_RATIO_LOW:-4e-4}
-clip_ratio_high=${CLIP_RATIO_HIGH:-4e-4}
+clip_ratio_low=${CLIP_RATIO_LOW:-0.2}
+clip_ratio_high=${CLIP_RATIO_HIGH:-0.28}
 clip_ratio_c=${CLIP_RATIO_C:-10.0}
 
 # Response length parameters
@@ -58,7 +50,7 @@ overlong_buffer_len=${OVERLONG_BUFFER_LEN:-$((1024 * 4))}  # unused
 overlong_penalty_factor=${OVERLONG_PENALTY_FACTOR:-1.0}
 
 loss_agg_mode=${LOSS_AGG_MODE:-"token-mean"}
-loss_mode=${LOSS_MODE:-gspo}
+loss_mode=${LOSS_MODE:-vanilla}
 
 # Algorithm
 temperature=${TEMPERATURE:-1.0}
@@ -70,9 +62,6 @@ val_top_k=${VAL_TOP_K:--1}
 
 # Performance Related Parameter
 use_dynamic_bsz=${USE_DYNAMIC_BSZ:-True}
-# The training GPUs serve no rollout here, so nothing needs the memory offloading frees: OFFLOAD=False keeps the
-# params/grads/optimizer on GPU and runs the optimizer on GPU. OFFLOAD=True moves them to CPU between train steps
-# and runs the optimizer on CPU (the colocated setup), which saves GPU memory at the cost of step time.
 offload=${OFFLOAD:-False}
 gen_tp=${GEN_TP:-4}
 train_tp=${TP:-4}
@@ -90,22 +79,19 @@ optimizer_offload_fraction=${OFFLOAD_FRACTION:-1.0}
 USE_MBRIDGE=${USE_MBRIDGE:-True}
 USE_DIST_CKPT=${USE_DIST_CKPT:-False}
 
-# V1 separate_async topology: NNODES x NGPUS_PER_NODE train, ROLLOUT_NNODES x ROLLOUT_NGPUS_PER_NODE serve rollout.
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 ROLLOUT_NNODES=${ROLLOUT_NNODES:-2}
 ROLLOUT_NGPUS_PER_NODE=${ROLLOUT_NGPUS_PER_NODE:-8}
 
-# separate_async requires train_batch_size (prompts/step) = parameter_sync_step x ppo_mini_batch_size; with the
-# defaults the rollout weights are refreshed once per training step.
 # num_warmup_batches pre-fills the rollout pipeline before the first train step.
-train_prompt_bsz=${TRAIN_PROMPT_BSZ:-32}
+train_prompt_bsz=${TRAIN_PROMPT_BSZ:-64}
 n_resp_per_prompt=${N_RESP_PER_PROMPT:-8}
 train_prompt_mini_bsz=${PPO_MINI_BATCH_SIZE:-16}
-parameter_sync_step=${PARAMETER_SYNC_STEP:-2}
+parameter_sync_step=${PARAMETER_SYNC_STEP:-4}
 num_warmup_batches=${NUM_WARMUP_BATCHES:-1}
-lr_decay_steps=${LR_DECAY_STEPS:-10000}
-test_freq=${TEST_FREQ:-20}
+lr_decay_steps=${LR_DECAY_STEPS:-2000}
+test_freq=${TEST_FREQ:-10}
 if ((train_prompt_bsz != parameter_sync_step * train_prompt_mini_bsz)); then
     echo "TRAIN_PROMPT_BSZ must equal PARAMETER_SYNC_STEP * PPO_MINI_BATCH_SIZE for separate_async" >&2
     exit 1
@@ -118,7 +104,7 @@ fi
 # ============================================================================
 bypass_mode=${BYPASS_MODE:-False}                                # True => old_log_prob = rollout_log_prob
 bypass_loss_type=${BYPASS_LOSS_TYPE:-ppo_clip}                   # ppo_clip | reinforce
-rollout_is=${ROLLOUT_IS:-token}                                  # null: PPO clip already applies the IS ratio
+rollout_is=${ROLLOUT_IS:-null}                                   # PPO clip already applies the IS ratio
 rollout_is_threshold=${ROLLOUT_IS_THRESHOLD:-2.0}                # single float => TIS upper clamp; "lo_hi" string => IcePop
 rollout_is_batch_normalize=${ROLLOUT_IS_BATCH_NORMALIZE:-False}  # normalize IS weights to mean=1.0 within a batch
 rollout_rs=${ROLLOUT_RS:-null}                                   # no rejection sampling
@@ -127,8 +113,8 @@ rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-null}
 # ============================================================================
 # 30B MoE Router Replay
 # ============================================================================
-router_replay_mode=${ROUTER_REPLAY_MODE:-R3}                          # disabled | R2 | R3
-enable_rollout_routing_replay=${ENABLE_ROLLOUT_ROUTING_REPLAY:-True}  # required only for R3
+router_replay_mode=${ROUTER_REPLAY_MODE:-disabled}                    # disabled | R2 | R3
+enable_rollout_routing_replay=${ENABLE_ROLLOUT_ROUTING_REPLAY:-False} # required only for R3
 
 ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     -- env RAY_OVERRIDE_JOB_RUNTIME_ENV=1 \
@@ -236,7 +222,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.task_config_path=${TASK_CONFIG} \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name=${SERVED_MODEL_NAME} \
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=${MASK_UNFINISHED_EPISODE} \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.prompt_length=${max_prompt_length} \
     actor_rollout_ref.rollout.response_length=${max_response_length} \
@@ -276,9 +262,8 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.val_before_train=True \
-    trainer.save_freq=5 \
-    trainer.max_actor_ckpt_to_keep=2 \
+    trainer.val_before_train=False \
+    trainer.save_freq=10 \
     trainer.total_epochs=10 \
     trainer.resume_mode=auto \
     trainer.log_val_generations=10 \

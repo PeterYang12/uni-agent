@@ -143,6 +143,10 @@ def _capture_wrapper(command_path: str, out: str, err: str, rc: str, *, signal: 
 # an empty lists dir); `|| true` tolerates a flaky mirror if tmux still resolves.
 _INSTALL_TMUX = r"""
 if command -v apt-get >/dev/null 2>&1; then
+  # A start attempt that timed out leaves its apt-get running and holding the apt lock; wait for it, then reuse
+  # its result instead of failing on the lock.
+  for _ in $(seq 1 120); do pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1 || break; sleep 2; done
+  command -v tmux >/dev/null 2>&1 && exit 0
   DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux
 elif command -v dnf >/dev/null 2>&1; then dnf install -y tmux

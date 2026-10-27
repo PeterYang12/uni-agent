@@ -87,7 +87,7 @@ class ReActAgent(Agent):
         }
         termination_reason = "unknown"
         try:
-            async with toolbox.entered(retry=3, timeout=60):
+            async with toolbox.entered(retry=3, timeout=300):
                 if workdir is not None and "shell" in toolbox.names():
                     await toolbox.call("shell", {"command": f"cd -- {shlex.quote(workdir)}"})
                 for step_idx in range(1, cfg.max_steps + 1):

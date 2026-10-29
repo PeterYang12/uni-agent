@@ -11,7 +11,17 @@ This guide trains `Qwen3-Coder-30B-A3B-Instruct` with the white-box `ReAct Agent
 - A ROCm environment with verl, vLLM, and Megatron-LM. The recipe was run in the `verlai/verl:rocm7.14_torch2.12_release_0724` image (ROCm 7.14, PyTorch 2.12, vLLM 0.26, Ray 2.56). Start the container with `--device /dev/kfd --device /dev/dri --network host --ipc host` and mount the shared data directory.
 - A Ray cluster with 3 nodes × 8 GPUs: 2 rollout nodes and 1 training node.
 - An E2B deployment, either hosted or self-hosted. Put `E2B_API_KEY` in the Ray runtime environment, and also `E2B_API_URL` and `E2B_SANDBOX_URL` for a self-hosted deployment. Do not commit real keys.
-- Datasets, Task Config, and Ray Runtime Environment prepared as described in [Run Agent RL Training](rl-training.md).
+- Datasets and the Ray Runtime Environment prepared as described in [Run Agent RL Training](rl-training.md). This recipe trains on the processed [`swe-rebench-filtered-1150`](https://huggingface.co/datasets/dyyyyyyyy/swe-rebench-filtered-1150) dataset and validates on SWE-bench Verified.
+- A ReAct Task Config that uses E2B sandboxes. Start from `examples/quickstart/training/task_config_react.yaml` and replace the `sandbox` block of each task, as described in [Launch a Sandbox](launch-sandbox.md):
+
+    ```yaml
+    sandbox:
+      provider: e2b
+      runtime_timeout: 3600
+      sandbox_kwargs:
+        cpu_count: 2
+        memory_mb: 4096
+    ```
 
 ## Launch Training
 
@@ -32,8 +42,10 @@ TRAIN_PROMPT_BSZ=64 \
 N_RESP_PER_PROMPT=8 \
 PPO_MINI_BATCH_SIZE=16 \
 PARAMETER_SYNC_STEP=4 \
-TASK_CONFIG=configs/task_config_react_e2b.yaml \
-RUNTIME_ENV=configs/runtime_env_e2b.yaml \
+TRAIN_FILE=/path/to/data/swe_rebench_filtered_1150.parquet \
+TEST_FILE=/path/to/data/swe_bench_verified.parquet \
+TASK_CONFIG=/path/to/task_config_react_e2b.yaml \
+RUNTIME_ENV=/path/to/runtime_env.yaml \
 EXP_NAME=react_qwen3_coder_30b_rocm_grpo \
 ADV_ESTIMATOR=grpo \
 LOSS_MODE=vanilla \
@@ -69,7 +81,25 @@ Checkpoints and per-session Agent logs are written under:
 <RUNTIME_DIR>/logs/<PROJECT_NAME>/<EXP_NAME>/
 ```
 
-Each step writes one directory of session logs. A session whose sandbox became unreachable logs `sandbox died before scoring` and is scored as unresolved. If a whole step shows `critic/score/mean` near 0 and `actor/grad_norm` near 0, check those logs for a sandbox-provider outage before suspecting the model.
+Each step writes one directory of session logs. If a whole step shows `critic/score/mean` near 0 and `actor/grad_norm` near 0, check those logs for unreachable E2B sandboxes before suspecting the model: a sandbox-provider outage can take down most of a step's batch.
+
+## Evaluate a Checkpoint
+
+The launch command disables in-training validation (`TEST_FREQ=-1`). To evaluate a checkpoint, serve its Hugging Face export with vLLM and run the inference script from [Run Agent Inference](agent-inference.md) on SWE-bench Verified:
+
+```bash
+vllm serve <RUNTIME_DIR>/ckpts/<PROJECT_NAME>/<EXP_NAME>/global_step_80/actor/model/huggingface \
+  --served-model-name step80 --tensor-parallel-size 4 --max-model-len 131072 \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder --port 8000
+
+python3 examples/inference/parallel_infer_api.py \
+  --data-path /path/to/data/swe_bench_verified.parquet \
+  --task-config /path/to/task_config_react_e2b.yaml \
+  --base-url http://localhost:8000/v1 --model step80 --api-key EMPTY \
+  --concurrency 32 --result-path step80.json
+```
+
+The results below use the `swe_bench` task of the same Task Config with `top_p: 0.95` in `sampling_params_override`, one sample per task. Rerun tasks whose sandbox became unreachable before you compute the score.
 
 ## Results
 
@@ -98,4 +128,4 @@ Episodes get longer as training proceeds. Entropy settles at about 0.5 after ste
 
 ### Sandbox Reliability
 
-Each rollout runs in its own E2B sandbox, about 540 at once during training. Outside the six outage steps, about 2% of sessions lost their sandbox, which lowers the mean reward by about 0.006. A session whose sandbox dies is scored as unresolved. This is the right default for failures the agent causes, such as exhausting memory, but provider outages are not the model's fault. For evaluation, such tasks were rerun.
+Each rollout runs in its own E2B sandbox, about 540 at once during training. Outside the six outage steps, about 2% of sessions lost their sandbox, which lowers the mean reward by about 0.006. Provider outages are not the model's fault, so evaluation tasks interrupted this way were rerun.

@@ -5,7 +5,7 @@ DATA_DIR=${DATA_DIR:-/work}
 RUNTIME_DIR=${RUNTIME_DIR:-/work/runtime}
 
 project_name=${PROJECT_NAME:-"crusoe-Uni-Agent-Qwen3-Coder-30B-react-e2b_16inference_8_train"}
-exp_name=${EXP_NAME:-"$(date +%Y%m%d%H)_exp"}
+exp_name=${EXP_NAME:-"react_1150_sepasync"}
 
 MODEL_PATH=${MODEL_PATH:-"${DATA_DIR}/models/Qwen3-Coder-30B-A3B-Instruct"}
 TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/data/swe_rebench_filtered_1150.parquet"}
@@ -91,7 +91,8 @@ train_prompt_mini_bsz=${PPO_MINI_BATCH_SIZE:-16}
 parameter_sync_step=${PARAMETER_SYNC_STEP:-4}
 num_warmup_batches=${NUM_WARMUP_BATCHES:-1}
 lr_decay_steps=${LR_DECAY_STEPS:-2000}
-test_freq=${TEST_FREQ:-10}
+test_freq=${TEST_FREQ:--1}
+total_training_steps=${TOTAL_TRAINING_STEPS:-null}
 if ((train_prompt_bsz != parameter_sync_step * train_prompt_mini_bsz)); then
     echo "TRAIN_PROMPT_BSZ must equal PARAMETER_SYNC_STEP * PPO_MINI_BATCH_SIZE for separate_async" >&2
     exit 1
@@ -223,6 +224,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name=${SERVED_MODEL_NAME} \
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=${MASK_UNFINISHED_EPISODE} \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+    actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.prompt_length=${max_prompt_length} \
     actor_rollout_ref.rollout.response_length=${max_response_length} \
@@ -265,6 +267,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     trainer.val_before_train=False \
     trainer.save_freq=10 \
     trainer.total_epochs=10 \
+    trainer.total_training_steps=${total_training_steps} \
     trainer.resume_mode=auto \
     trainer.log_val_generations=10 \
     trainer.default_local_dir="${CKPTS_DIR}" \
